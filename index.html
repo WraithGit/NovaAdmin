@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NovaID Admin</title>
+  <link rel="stylesheet" href="./assets/base.css">
+</head>
+<body>
+  <div class="wrapper">
+    <div class="card" style="margin-top:16px;">
+      <h1 class="brand">NovaID — Admin Panel</h1>
+      <p class="helper">Manage whitelist, generate hashes, and create encrypted <code>.idpack</code> files.</p>
+
+      <div style="display:flex;gap:8px;margin:12px 0 16px">
+        <button class="tab" data-tab="wl">Whitelist</button>
+        <button class="tab" data-tab="gen">Hash Generator</button>
+        <button class="tab" data-tab="maker">Maker</button>
+      </div>
+
+      <section id="tab-wl" style="display:block">
+        <div class="row">
+          <input id="token" placeholder="Admin token (paste once)">
+          <button id="saveToken">Save token</button>
+        </div>
+        <p class="helper">Stored in this browser and sent as <code>x-admin-token</code>.</p>
+        <div class="row">
+          <input id="newHash" placeholder="64-char SHA-256 hex (e.g., efba98...)" />
+          <button id="addBtn">Add hash</button>
+        </div>
+        <p id="msg" class="helper"></p>
+        <table id="tbl"><thead><tr><th>Hash</th><th style="width:120px;">Actions</th></tr></thead><tbody></tbody></table>
+      </section>
+
+      <section id="tab-gen" style="display:none">
+        <h2>Hash Generator</h2>
+        <div class="row2">
+          <input id="genId" placeholder="ID number (e.g., ID-1445)">
+          <input id="genSalt" placeholder="Salt (e.g., SaltyNuts)">
+        </div>
+        <div class="row">
+          <button id="genBtn">Generate Hash</button>
+          <input id="genOut" readonly placeholder="64-hex will appear here">
+        </div>
+        <p class="helper">Copy the output above and add it to the whitelist tab.</p>
+      </section>
+
+      <section id="tab-maker" style="display:none">
+        <h2>Maker — create encrypted <code>.idpack</code></h2>
+        <div class="row2">
+          <input id="name" placeholder="Name (Jane Doe)">
+          <input id="dob" type="date" placeholder="DOB">
+        </div>
+        <div class="row2">
+          <input id="idnum" placeholder="ID # (ND-123456)">
+          <input id="exp" type="date" placeholder="Expiry">
+        </div>
+        <div class="row2">
+          <input id="iss" type="date" placeholder="Issued">
+          <input id="addr" placeholder="Address (1 Example St)">
+        </div>
+        <div class="row2">
+          <input id="photo" type="file" accept="image/*">
+          <img class="photo" id="preview" alt="preview">
+        </div>
+        <div class="row2">
+          <input id="pw" type="password" placeholder="File Password (give this to buyer)">
+          <div></div>
+        </div>
+        <div class="row">
+          <button id="make">Encrypt & Download</button>
+          <button id="plain">Download Plain JSON</button>
+        </div>
+        <p id="mkMsg" class="helper"></p>
+      </section>
+    </div>
+    <p class="helper" style="margin-top:10px">Public check endpoint: <code>/api/check?hash=...</code></p>
+  </div>
+
+<script type="module">
+  import { CONFIG } from './assets/config.js';
+
+  // Tabs
+  const tabs = document.querySelectorAll('.tab');
+  const sec = { wl: document.getElementById('tab-wl'), gen: document.getElementById('tab-gen'), maker: document.getElementById('tab-maker') };
+  tabs.forEach(t => t.addEventListener('click', () => {
+    tabs.forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    Object.values(sec).forEach(s => s.style.display='none');
+    sec[t.dataset.tab].style.display='block';
+  }));
+
+  // Admin token
+  const API = ""; const $ = id => document.getElementById(id); const msg = $('msg');
+  const token = () => localStorage.getItem('admin_token') || '';
+  const setToken = v => localStorage.setItem('admin_token', v);
+  $('saveToken').onclick = () => { setToken($('token').value.trim()); msg.textContent = "Saved token."; };
+
+  async function api(path, method="GET", body){
+    const res = await fetch(API + path, {
+      method,
+      headers: { "Content-Type": "application/json", "x-admin-token": token() },
+      body: body ? JSON.stringify(body) : undefined,
+      cache: "no-store"
+    });
+    const j = await res.json().catch(()=>({error:"Bad JSON"}));
+    if(!res.ok) throw new Error(j.error || res.statusText);
+    return j;
+  }
+
+  async function refresh(){
+    $('token').value = token();
+    try {
+      const data = await api('/api/list');
+      const tbody = $('tbl').querySelector('tbody'); tbody.innerHTML = "";
+      (data.items || []).forEach(h => {
+        const tr = document.createElement('tr');
+        const td1 = document.createElement('td'); td1.textContent = h;
+        const td2 = document.createElement('td');
+        const btn = document.createElement('button'); btn.textContent = "Remove";
+        btn.onclick = async ()=>{ try { await api('/api/remove','POST',{hash:h}); refresh(); } catch(e){ msg.textContent=e.message; } };
+        td2.appendChild(btn); tr.append(td1, td2); tbody.appendChild(tr);
+      });
+      msg.textContent = "Loaded whitelist.";
+    } catch(e){ msg.textContent = e.message; }
+  }
+
+  $('addBtn').onclick = async () => {
+    const h = $('newHash').value.trim().toLowerCase();
+    if(!/^[a-f0-9]{64}$/.test(h)) { msg.textContent = "Enter a valid 64-hex hash."; return; }
+    try { await api('/api/add','POST',{hash:h}); $('newHash').value=""; refresh(); msg.textContent="Added."; }
+    catch(e){ msg.textContent=e.message; }
+  };
+
+  // Hash generator
+  $('genBtn').onclick = async () => {
+    const id = $('genId').value.trim(); const salt = $('genSalt').value.trim();
+    if(!id||!salt) { $('genOut').value=""; return; }
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${id}:${salt}`));
+    const hash = [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    $('genOut').value = hash;
+  };
+
+  // Maker
+  function bytesToB64(bytes){ let s=''; for(const b of new Uint8Array(bytes)) s+=String.fromCharCode(b); return btoa(s); }
+  async function toDataUrl(file){ if(!file) return ''; const buf = await file.arrayBuffer(); return `data:${file.type};base64,${bytesToB64(new Uint8Array(buf))}`; }
+  $('photo').addEventListener('change', async ()=>{ const f=$('photo').files?.[0]; const url = await toDataUrl(f); $('preview').src=url; });
+
+  async function encryptJson(obj, password, iterations){
+    const enc=new TextEncoder(); const salt=crypto.getRandomValues(new Uint8Array(16)); const iv=crypto.getRandomValues(new Uint8Array(12));
+    const keyMat=await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+    const key=await crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt,iterations}, keyMat, {name:'AES-GCM',length:256}, false, ['encrypt']);
+    const plain=enc.encode(JSON.stringify(obj)); const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv}, key, plain);
+    return { format:'novaid-aesgcm-json/1', iterations, salt:bytesToB64(salt), iv:bytesToB64(iv), ciphertext:bytesToB64(ct) };
+  }
+  function collect(){
+    return { name:$('name').value.trim(), dob:$('dob').value, idNumber:$('idnum').value.trim(),
+      expiryDate:$('exp').value, issueDate:$('iss').value, address:$('addr').value.trim(),
+      photoDataUrl: $('preview').src || '' };
+  }
+  function download(name,text){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type:'application/json'})); a.download=name; document.body.appendChild(a); a.click(); a.remove(); }
+
+  $('plain').onclick = ()=>{ const d=collect(); download((d.name||'id')+'.json', JSON.stringify(d,null,2)); };
+  $('make').onclick = async ()=>{ const d=collect(); const pw=$('pw').value; if(!pw){$('mkMsg').textContent='Set a file password.';return;} const container=await encryptJson(d,pw,120000); download((d.name||'id')+'.idpack', JSON.stringify(container)); $('mkMsg').textContent='Done. Send the .idpack and password to the buyer.'; };
+
+  refresh();
+</script>
+</body>
+</html>
