@@ -1,8 +1,0 @@
-{
-  "name": "novaid-admin",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@netlify/blobs": "^6.3.0"
-  }
-}
