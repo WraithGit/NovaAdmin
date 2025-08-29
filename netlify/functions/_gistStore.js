@@ -1,0 +1,1 @@
+export async function readArray(){return []}; export async function writeArray(arr){}
