@@ -1,0 +1,20 @@
+import { okAuth, cors } from './_guard.js';
+import { readArray, writeArray } from './_fileStore.js';
+
+export const handler = async (event) => {
+  if (event.httpMethod === 'OPTIONS') return cors(200, {});
+  if (!okAuth(event)) return cors(401, { error: 'unauthorized' });
+
+  try {
+    const { hash } = JSON.parse(event.body || '{}');
+    const h = (hash || '').toLowerCase().trim();
+    if (!/^[a-f0-9]{64}$/.test(h)) return cors(400, { error: 'invalid hash' });
+
+    const arr = await readArray();
+    if (!arr.includes(h)) arr.push(h);
+    await writeArray(arr);
+    return cors(200, { ok: true });
+  } catch (e) {
+    return cors(500, { error: 'server error' });
+  }
+};
